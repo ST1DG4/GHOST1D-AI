@@ -22,6 +22,7 @@ st.set_page_config(page_title="GhoStid AI", layout="wide", page_icon="🤖")
 # --- OBTENER CLAVE API ---
 ELEVENLABS_API_KEY = os.environ.get("ELEVEN_API_KEY")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+
 if not ELEVENLABS_API_KEY or not GOOGLE_API_KEY:
     st.error("Error crítico: Faltan claves de API. Revisa tus secretos en Streamlit Cloud.")
     st.stop()
@@ -92,8 +93,7 @@ with st.sidebar:
 
 # Muestra la bienvenida solo si el historial está vacío
 if not st.session_state.messages:
-    with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
-        st.markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
+    st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')).markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
 
 # Muestra todo el historial de chat existente
 for msg in st.session_state.messages:
@@ -102,7 +102,7 @@ for msg in st.session_state.messages:
         if msg.get("audio"):
             st.audio(msg["audio"], format='audio/mpeg', start_time=0)
 
-# Obtiene la nueva entrada del usuario (de texto o de voz)
+# Obtiene la nueva entrada del usuario
 prompt = st.chat_input("Escribe tu pregunta o pídemelo...")
 if st.session_state.get('user_input'):
     prompt = st.session_state.pop('user_input')
