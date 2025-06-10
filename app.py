@@ -22,6 +22,7 @@ st.set_page_config(page_title="GhoStid AI", layout="wide", page_icon="🤖")
 # --- OBTENER CLAVE API ---
 ELEVENLABS_API_KEY = os.environ.get("ELEVEN_API_KEY")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+
 if not ELEVENLABS_API_KEY or not GOOGLE_API_KEY:
     st.error("Error crítico: Faltan claves de API. Revisa tus secretos en Streamlit Cloud.")
     st.stop()
@@ -60,25 +61,19 @@ def speak_response_cloud(text_to_speak, voice_id):
     data = {"text": text_to_speak, "model_id": "eleven_multilingual_v2"}
     try:
         response = requests.post(TTS_URL, json=data, headers=headers)
-        if response.status_code == 200:
-            return response.content
-        else:
-            # Añadimos un error visible para el diagnóstico final
-            st.error(f"Error de API de ElevenLabs: {response.text}")
-            return None
-    except Exception as e:
-        st.error(f"Error de conexión con ElevenLabs: {e}")
-        return None
+        if response.status_code == 200: return response.content
+        else: return None
+    except Exception: return None
 
 # --- INTERFAZ DE USUARIO (SIDEBAR) ---
 with st.sidebar:
-    # ... (Sin cambios en esta sección) ...
     st.title("🚀 GhoStid AI"); st.caption("Tu tutor de programación personal.")
     st.header("Opciones de Entrada")
     if st.button("🎤 Hablar", use_container_width=True):
         st.session_state.user_input = listen_to_user()
     uploaded_file = st.file_uploader("📄 Adjuntar Archivo", type=["png", "jpg", "jpeg", "txt", "py", "md", "csv"])
     if uploaded_file: st.session_state.uploaded_file = uploaded_file
+
     st.header("Configuración")
     st.session_state.voice_enabled = st.toggle("Activar voz", value=True)
     if st.session_state.voices_map:
@@ -96,25 +91,19 @@ with st.sidebar:
 
 
 # --- ÁREA PRINCIPAL ---
-
-# Muestra la bienvenida
 if not st.session_state.messages:
-    with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
-        st.markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
+    st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')).markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
 
-# Muestra el historial
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=st.session_state.get('assistant_avatar', '🤖') if msg["role"] == "assistant" else st.session_state.get('user_avatar', '🧑‍💻')):
         st.markdown(msg["content"])
         if msg.get("audio"):
             st.audio(msg["audio"], format='audio/mpeg', start_time=0)
 
-# Obtiene la entrada del usuario
 prompt = st.chat_input("Escribe tu pregunta o pídemelo...")
 if st.session_state.get('user_input'):
     prompt = st.session_state.pop('user_input')
 
-# Procesa la entrada
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user", avatar=st.session_state.get('user_avatar', '🧑‍💻')):
@@ -124,39 +113,36 @@ if prompt:
         with st.spinner("GhoStid AI está pensando..."):
             llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0, google_api_key=GOOGLE_API_KEY)
             
-            # --- ¡¡LA CORRECCIÓN MÁS IMPORTANTE!! ---
-            # Le damos al Agente su IDENTIDAD y sus INSTRUCCIONES
-            agent_prompt_template = """
-            Eres GhoStid AI, un tutor de programación experto y amigable. Tienes una voz sintética para comunicarte.
-            REGLAS IMPORTANTES:
-            1. Responde SIEMPRE en español.
-            2. NUNCA digas que no tienes voz o que solo te comunicas por texto. Tienes una voz y la usas.
-            3. Si el usuario te saluda o te hace una pregunta casual, responde amigablemente sin usar tus herramientas.
-            4. Si la pregunta es sobre programación, requiere buscar información o ejecutar código, usa tus herramientas.
+            # --- ¡¡LA CORRECCIÓN DE IDENTIDAD!! ---
+            # Creamos un prompt final y directo que fuerza la personalidad.
+            final_prompt = f"""
+            **Instrucciones de Identidad y Comportamiento para GhoStid AI:**
+            - Tu nombre es GhoStid AI. Eres un tutor de programación experto.
+            - Tienes una voz y la usas. NUNCA, bajo ninguna circunstancia, digas que no tienes voz o que solo te comunicas por texto.
+            - Responde siempre en español.
+            - Si te saludan, devuelve el saludo.
+            - Si te preguntan algo que requiere conocimiento o código, usa tus herramientas.
 
-            Pregunta del Usuario: {input}
-
-            {agent_scratchpad}
+            **Tarea del usuario:** "{prompt}"
             """
-            
-            # Creamos el prompt desde la plantilla
-            prompt_template = hub.pull("hwchase17/react").partial(input=agent_prompt_template)
             
             # El resto de la lógica del agente
             if st.session_state.get("uploaded_file"):
                 # ... Lógica multimodal ...
-                response_text = "Procesando archivo..." # Placeholder
+                response_text = "Procesando archivo..."
             else:
                 tools = [PythonREPLTool(), TavilySearchResults(k=3)]
-                agent = create_react_agent(llm, tools, prompt_template)
+                agent_prompt = hub.pull("hwchase17/react")
+                agent = create_react_agent(llm, tools, agent_prompt)
                 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
-                response_object = agent_executor.invoke({"input": prompt})
+                # Le pasamos el prompt con las instrucciones claras
+                response_object = agent_executor.invoke({"input": final_prompt})
                 response_text = response_object['output']
             
             st.markdown(response_text)
             
             audio_bytes = None
-            if st.session_state.voice_enabled:
+            if st.session_state.voice_enabled and st.session_state.voices_map:
                 speakable_text = extract_speakable_text(response_text)
                 if speakable_text:
                     selected_voice_id = st.session_state.voices_map.get(st.session_state.get("selected_voice_name", "Rachel"))
