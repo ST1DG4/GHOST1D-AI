@@ -62,33 +62,24 @@ def speak_response_cloud(text_to_speak, voice_id):
         response = requests.post(TTS_URL, json=data, headers=headers)
         if response.status_code == 200:
             return response.content
-        else:
-            st.error(f"Error de API de ElevenLabs: {response.text}")
-            return None
-    except Exception as e:
-        st.error(f"Error al procesar el audio: {e}")
-        return None
+        else: return None
+    except Exception: return None
 
 # --- INTERFAZ DE USUARIO (SIDEBAR) ---
 with st.sidebar:
     st.title("🚀 GhoStid AI"); st.caption("Tu tutor de programación personal.")
     st.header("Opciones de Entrada")
     if st.button("🎤 Hablar", use_container_width=True):
-        try: st.session_state.user_input_from_voice = listen_to_user(); st.rerun()
-        except Exception: st.session_state.mic_error = True; st.rerun()
+        try: st.session_state.user_input_from_voice = listen_to_user()
+        except Exception: st.session_state.mic_error = True
     uploaded_file = st.file_uploader("📄 Adjuntar un Archivo", type=["png", "jpg", "jpeg", "txt", "py", "md", "csv"])
     if uploaded_file is not None:
         file_extension = os.path.splitext(uploaded_file.name)[1]
         if file_extension in [".png", ".jpg", ".jpeg"]:
             st.session_state.file_context = {"type": "image", "content": Image.open(uploaded_file), "name": uploaded_file.name}
-            st.sidebar.image(st.session_state.file_context["content"], caption=f"Imagen: {uploaded_file.name}")
         else:
-            try:
-                content = uploaded_file.getvalue().decode("utf-8")
-                st.session_state.file_context = {"type": "text", "content": content, "name": uploaded_file.name}
-                st.sidebar.text_area("Contenido del archivo:", content, height=150, disabled=True)
+            try: content = uploaded_file.getvalue().decode("utf-8"); st.session_state.file_context = {"type": "text", "content": content, "name": uploaded_file.name}
             except Exception: st.sidebar.error("No se pudo leer el archivo.")
-        st.sidebar.success("Archivo listo para ser usado.")
     st.header("Configuración")
     st.session_state.voice_enabled = st.toggle("Activar voz", value=True)
     if st.session_state.voices_map:
@@ -105,61 +96,68 @@ with st.sidebar:
     st.markdown("---"); st.image("GHOSTID_LOGO.png", use_container_width=True); st.markdown("<p style='text-align: center;'>STIDGAR</p>", unsafe_allow_html=True)
 
 # --- ÁREA PRINCIPAL Y LÓGICA DEL AGENTE ---
+if "messages" not in st.session_state: st.session_state.messages = []
 if st.session_state.get("mic_error"):
     st.error("❌ Error de Micrófono."); st.warning("Revisa los permisos del micrófono en tu navegador y sistema.");
     if st.button("🔄 Volver"): st.session_state.mic_error = False; st.rerun()
-else:
-    if "messages" not in st.session_state: st.session_state.messages = [{"role": "assistant", "content": "¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo."}]
+
+# Mostramos la bienvenida solo si no hay mensajes
+if not st.session_state.messages:
+    st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')).markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
+
+# Mostramos el historial de chat
+for msg in st.session_state.messages:
+    static_avatar = st.session_state.get('assistant_avatar', '🤖') if msg["role"] == "assistant" else st.session_state.get('user_avatar', '🧑‍💻')
+    with st.chat_message(msg["role"], avatar=static_avatar):
+        gif_to_show = st.session_state.get('assistant_gif') if msg["role"] == "assistant" else st.session_state.get('user_gif')
+        if gif_to_show: st.image(gif_to_show, width=120)
+        st.markdown(msg["content"])
+        if msg.get("audio"): st.audio(msg["audio"], format='audio/mpeg', start_time=0)
+
+# Obtenemos la nueva entrada del usuario
+user_input_text = st.chat_input("Escribe tu pregunta o pídemelo...")
+user_input_voice = st.session_state.pop('user_input_from_voice', None)
+user_input = user_input_text or user_input_voice
+
+if user_input:
+    # Guardamos y mostramos la entrada del usuario
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user", avatar=st.session_state.get('user_avatar', '🧑‍💻')):
+        if st.session_state.get('user_gif'): st.image(st.session_state.get('user_gif'), width=120)
+        st.markdown(user_input)
     
-    # --- ¡¡AQUÍ ESTÁ LA CORRECCIÓN #1!! ---
-    # Este bucle ahora es el responsable de mostrar el audio
-    for msg in st.session_state.messages:
-        static_avatar = st.session_state.get('assistant_avatar', '🤖') if msg["role"] == "assistant" else st.session_state.get('user_avatar', '🧑‍💻')
-        with st.chat_message(msg["role"], avatar=static_avatar):
-            gif_to_show = st.session_state.get('assistant_gif') if msg["role"] == "assistant" else st.session_state.get('user_gif')
-            if gif_to_show: st.image(gif_to_show, width=120)
-            st.markdown(msg["content"])
-            # Si el mensaje tiene audio guardado, lo mostramos aquí
-            if msg.get("audio"):
-                st.audio(msg["audio"], format='audio/mpeg', start_time=0)
-
-    if prompt := st.chat_input("Escribe tu pregunta o pídemelo..."):
-        st.session_state.user_input_from_voice = None; st.session_state.user_input_from_text = prompt
-    user_input = st.session_state.get('user_input_from_text') or st.session_state.get('user_input_from_voice')
-
-    if user_input:
-        st.session_state.user_input_from_text = None; st.session_state.user_input_from_voice = None; st.session_state.messages.append({"role": "user", "content": user_input})
-        
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0, google_api_key=GOOGLE_API_KEY)
-        
-        with st.spinner("GhoStid AI está pensando..."):
-            if st.session_state.get("file_context"):
-                file_context = st.session_state.file_context
-                if file_context["type"] == "image":
-                    human_message = HumanMessage(content=[{"type": "text", "text": user_input}, {"type": "image_url", "image_url": file_context["content"]}])
-                    response = llm.invoke([human_message]); response_text = response.content
-                else:
-                    prompt_with_context = f"{user_input}\n\n**Contexto del archivo '{file_context['name']}':**\n```\n{file_context['content']}\n```"
-                    tools = [PythonREPLTool(), TavilySearchResults(k=3)]; prompt_template = hub.pull("hwchase17/react"); agent = create_react_agent(llm, tools, prompt_template); agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
-                    response_object = agent_executor.invoke({"input": prompt_with_context}); response_text = response_object['output']
+    # Procesamos la respuesta del asistente
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0, google_api_key=GOOGLE_API_KEY)
+    
+    with st.spinner("GhoStid AI está pensando..."):
+        if st.session_state.get("file_context"):
+            file_context = st.session_state.pop("file_context")
+            if file_context["type"] == "image":
+                human_message = HumanMessage(content=[{"type": "text", "text": user_input}, {"type": "image_url", "image_url": file_context["content"]}])
+                response = llm.invoke([human_message]); response_text = response.content
             else:
+                prompt_with_context = f"{user_input}\n\n**Contexto del archivo '{file_context['name']}':**\n```\n{file_context['content']}\n```"
                 tools = [PythonREPLTool(), TavilySearchResults(k=3)]; prompt_template = hub.pull("hwchase17/react"); agent = create_react_agent(llm, tools, prompt_template); agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
-                response_object = agent_executor.invoke({"input": f"Responde en español a: {user_input}"}); response_text = response_object['output']
-            st.session_state.file_context = None
+                response_object = agent_executor.invoke({"input": prompt_with_context}); response_text = response_object['output']
+        else:
+            tools = [PythonREPLTool(), TavilySearchResults(k=3)]; prompt_template = hub.pull("hwchase17/react"); agent = create_react_agent(llm, tools, prompt_template); agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
+            response_object = agent_executor.invoke({"input": f"Responde en español a: {user_input}"}); response_text = response_object['output']
 
-            assistant_message = {"role": "assistant", "content": response_text}
-            
-            if st.session_state.voice_enabled and st.session_state.voices_map:
-                speakable_text = extract_speakable_text(response_text)
-                if speakable_text:
-                    with st.spinner("Generando voz..."):
-                        selected_voice_id = st.session_state.voices_map[st.session_state.selected_voice_name]
-                        audio_bytes = speak_response_cloud(speakable_text, selected_voice_id)
-                        if audio_bytes:
-                            # Guardamos los bytes del audio en el mensaje
-                            assistant_message["audio"] = audio_bytes
-            
-            # Guardamos el mensaje COMPLETO (con texto y audio)
-            st.session_state.messages.append(assistant_message)
-            # Y AHORA recargamos la página para mostrarlo todo.
-            st.rerun()
+        assistant_message = {"role": "assistant", "content": response_text}
+        
+        # Generamos y guardamos el audio
+        if st.session_state.voice_enabled and st.session_state.voices_map:
+            speakable_text = extract_speakable_text(response_text)
+            if speakable_text:
+                selected_voice_id = st.session_state.voices_map[st.session_state.selected_voice_name]
+                audio_bytes = speak_response_cloud(speakable_text, selected_voice_id)
+                if audio_bytes:
+                    assistant_message["audio"] = audio_bytes
+        
+        # Guardamos el mensaje completo del asistente
+        st.session_state.messages.append(assistant_message)
+        
+        # --- ¡¡LA CORRECCIÓN FINAL!! ---
+        # En lugar de recargar, simplemente forzamos a Streamlit a
+        # volver a dibujar la pantalla con la nueva información.
+        st.experimental_rerun()
