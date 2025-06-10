@@ -1,12 +1,10 @@
-streamlit==1.35.0
-langchain==0.1.20
-langchain-core==0.1.52
-langchain-google-genai==1.0.3
-langchain-experimental==0.0.59
+streamlit
+langchain
+langchain-google-genai
+langchain-experimental
 python-dotenv
 tavily-python
 SpeechRecognition
 requests
 Pillow
 PyAudio
-protobuf==3.20.0
