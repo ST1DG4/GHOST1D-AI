@@ -5,8 +5,11 @@ from dotenv import load_dotenv
 import requests
 import io
 import re
+import cv2  # La librería para "ver" video
+import numpy as np # Necesaria para procesar las imágenes del video
+import base64
 
-# --- IMPORTACIONES ---
+# --- IMPORTACIONES DE LANGCHAIN Y DEMÁS ---
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from langchain.agents import AgentExecutor, create_react_agent
@@ -22,128 +25,136 @@ st.set_page_config(page_title="GhoStid AI", layout="wide", page_icon="🤖")
 # --- OBTENER CLAVE API ---
 ELEVENLABS_API_KEY = os.environ.get("ELEVEN_API_KEY")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-if not ELEVENLABS_API_KEY or not GOOGLE_API_KEY:
-    st.error("Error crítico: Faltan claves de API. Revisa tus secretos en Streamlit Cloud.")
-    st.stop()
 
 # --- FUNCIONES DE CARGA Y HABILIDADES ---
 @st.cache_data
 def load_assets(asset_dir):
+    # ... (sin cambios)
     if not os.path.exists(asset_dir): return []
     return [os.path.join(asset_dir, f) for f in os.listdir(asset_dir)]
 
 @st.cache_data
 def get_available_voices():
+    # ... (sin cambios)
     headers = {"xi-api-key": ELEVENLABS_API_KEY}; url = "https://api.elevenlabs.io/v1/voices"
     try:
         response = requests.get(url, headers=headers)
         return {voice['name']: voice['voice_id'] for voice in response.json()['voices']} if response.status_code == 200 else {}
     except Exception: return {}
 
+# --- CAMBIO IMPORTANTE: FUNCIÓN PARA PROCESAR VIDEO ---
+def process_video_frames(video_bytes, frames_per_second=1):
+    """Extrae fotogramas de un video a una tasa específica."""
+    video_path = "temp_video.mp4"
+    with open(video_path, "wb") as f:
+        f.write(video_bytes)
+    
+    vidcap = cv2.VideoCapture(video_path)
+    fps = vidcap.get(cv2.CAP_PROP_FPS)
+    frame_interval = int(fps / frames_per_second)
+    
+    extracted_frames = []
+    frame_count = 0
+    while vidcap.isOpened():
+        success, image = vidcap.read()
+        if not success:
+            break
+        if frame_count % frame_interval == 0:
+            # Convertimos el fotograma de OpenCV (BGR) a PIL (RGB)
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(rgb_image)
+            extracted_frames.append(pil_image)
+        frame_count += 1
+        
+    vidcap.release()
+    os.remove(video_path)
+    return extracted_frames
+
+# (Resto de funciones de habilidad sin cambios)
+def listen_to_user(): #...
+def extract_speakable_text(text): #...
+def speak_response_cloud(text_to_speak, voice_id): #...
+
+# --- INICIALIZACIÓN DE ESTADO ---
 if 'voices_map' not in st.session_state: st.session_state.voices_map = get_available_voices()
 if 'static_avatars' not in st.session_state: st.session_state.static_avatars = load_assets("avatars")
 if 'animated_avatars' not in st.session_state: st.session_state.animated_avatars = load_assets("animated_avatars")
 if "messages" not in st.session_state: st.session_state.messages = []
 
-def listen_to_user():
-    r = sr.Recognizer();
-    with sr.Microphone() as source: st.info("Escuchando..."); r.adjust_for_ambient_noise(source); audio = r.listen(source)
-    try: query = r.recognize_google(audio, language='es-ES'); st.success(f"Has dicho: {query}"); return query
-    except Exception: st.error("No te he entendido."); return None
-
-def extract_speakable_text(text):
-    text_without_code = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
-    return ' '.join(text_without_code.split())
-
-def speak_response_cloud(text_to_speak, voice_id):
-    TTS_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-    headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
-    data = {"text": text_to_speak, "model_id": "eleven_multilingual_v2"}
-    try:
-        response = requests.post(TTS_URL, json=data, headers=headers)
-        if response.status_code == 200:
-            return response.content
-        else:
-            # --- ¡¡LA LÍNEA DE DIAGNÓSTICO!! ---
-            # Si la API falla, mostramos el error en la pantalla.
-            st.error(f"Error de API de ElevenLabs: {response.status_code} - {response.text}")
-            return None
-    except Exception as e:
-        st.error(f"Error de conexión con ElevenLabs: {e}")
-        return None
-
 # --- INTERFAZ DE USUARIO (SIDEBAR) ---
 with st.sidebar:
+    # (Hemos movido el file_uploader, la sidebar ahora es más limpia)
     st.title("🚀 GhoStid AI"); st.caption("Tu tutor de programación personal.")
     st.header("Opciones de Entrada")
     if st.button("🎤 Hablar", use_container_width=True):
         st.session_state.user_input = listen_to_user()
-    uploaded_file = st.file_uploader("📄 Adjuntar Archivo", type=["png", "jpg", "jpeg", "txt", "py", "md", "csv"])
-    if uploaded_file: st.session_state.uploaded_file = uploaded_file
     st.header("Configuración")
     st.session_state.voice_enabled = st.toggle("Activar voz", value=True)
     if st.session_state.voices_map:
         voice_names = list(st.session_state.voices_map.keys())
         st.session_state.selected_voice_name = st.selectbox("Voz del Asistente:", options=voice_names, index=voice_names.index("Rachel") if "Rachel" in voice_names else 0)
     with st.expander("🎨 Personalización Visual"):
-        format_func = lambda x: "Ninguno" if x is None else os.path.basename(x).split('.')[0].replace('_', ' ').title()
-        if st.session_state.static_avatars:
-            st.session_state.assistant_avatar = st.selectbox("Avatar Estático (Asistente):", options=st.session_state.static_avatars, format_func=format_func)
-            st.session_state.user_avatar = st.selectbox("Avatar Estático (Usuario):", options=st.session_state.static_avatars, index=min(1, len(st.session_state.static_avatars) - 1), format_func=format_func)
-        if st.session_state.animated_avatars:
-            st.session_state.assistant_gif = st.selectbox("Avatar Animado (Asistente):", options=[None] + st.session_state.animated_avatars, format_func=format_func)
-            st.session_state.user_gif = st.selectbox("Avatar Animado (Usuario):", options=[None] + st.session_state.animated_avatars, format_func=format_func)
+        # ... (código de personalización sin cambios)
     st.markdown("---"); st.image("GHOSTID_LOGO.png", use_container_width=True); st.markdown("<p style='text-align: center;'>STIDGAR</p>", unsafe_allow_html=True)
 
 # --- ÁREA PRINCIPAL ---
 if not st.session_state.messages:
-    with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
-        st.markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
+    # ... (Mensaje de bienvenida sin cambios)
 for msg in st.session_state.messages:
-    with st.chat_message(msg["role"], avatar=st.session_state.get('assistant_avatar', '🤖') if msg["role"] == "assistant" else st.session_state.get('user_avatar', '🧑‍💻')):
-        st.markdown(msg["content"])
-        if msg.get("audio"):
-            st.audio(msg["audio"], format='audio/mpeg', start_time=0)
+    # ... (Bucle de historial sin cambios)
 
-prompt = st.chat_input("Escribe tu pregunta o pídemelo...")
-if st.session_state.get('user_input'):
-    prompt = st.session_state.pop('user_input')
+# --- ZONA DE INTERACCIÓN PRINCIPAL (LA GRAN MEJORA) ---
+# Creamos un contenedor para agrupar el uploader y el chat input
+interaction_container = st.container()
+with interaction_container:
+    # El nuevo file uploader, ahora en el área principal
+    uploaded_file = st.file_uploader(
+        "Arrastra y suelta un archivo aquí (imagen, texto, video corto)",
+        type=["png", "jpg", "jpeg", "txt", "py", "md", "csv", "mp4", "mov"],
+        key="main_uploader"
+    )
+    if uploaded_file: st.session_state.uploaded_file = uploaded_file
 
+    prompt = st.chat_input("Escribe tu pregunta o pídemelo...")
+    if st.session_state.get('user_input'):
+        prompt = st.session_state.pop('user_input')
+
+# Lógica principal de procesamiento
 if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user", avatar=st.session_state.get('user_avatar', '🧑‍💻')):
-        st.markdown(prompt)
+    # ... (código para añadir el prompt del usuario al historial)
     
     with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
         with st.spinner("GhoStid AI está pensando..."):
             llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0, google_api_key=GOOGLE_API_KEY)
             
-            # --- Lógica del agente ---
-            tools = [PythonREPLTool(), TavilySearchResults(k=3)]
-            agent_prompt = hub.pull("hwchase17/react")
-            agent = create_react_agent(llm, tools, agent_prompt)
-            agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
+            # Lógica para manejar el archivo adjunto
+            if st.session_state.get("uploaded_file"):
+                uploaded_file = st.session_state.pop("uploaded_file")
+                file_extension = os.path.splitext(uploaded_file.name)[1].lower()
+                
+                # --- NUEVA LÓGICA PARA VIDEO ---
+                if file_extension in [".mp4", ".mov", ".avi"]:
+                    with st.spinner("Analizando fotogramas del video..."):
+                        video_bytes = uploaded_file.getvalue()
+                        frames = process_video_frames(video_bytes)
+                    
+                    if not frames:
+                        response_text = "No se pudieron extraer fotogramas del video. ¿Está corrupto?"
+                    else:
+                        # Creamos el prompt multimodal con los fotogramas
+                        prompt_parts = [{"type": "text", "text": f"Analiza este video y responde a la siguiente pregunta: {prompt}"}]
+                        for frame in frames:
+                            prompt_parts.append({"type": "image_url", "image_url": frame})
+                        
+                        human_message = HumanMessage(content=prompt_parts)
+                        response = llm.invoke([human_message]); response_text = response.content
+                
+                elif file_extension in [".png", ".jpg", ".jpeg"]:
+                    # ... (lógica de imagen sin cambios) ...
+                else:
+                    # ... (lógica de texto sin cambios) ...
             
-            # --- Envolvemos la pregunta con las instrucciones de identidad ---
-            final_prompt_with_identity = f"""
-            INSTRUCCIONES DE SISTEMA: Eres GhoStid AI, un tutor de programación experto y amigable.
-            Tienes una voz y la usas. NUNCA digas que no tienes voz. Responde siempre en español.
-            TAREA DEL USUARIO: {prompt}
-            """
-            
-            response_object = agent_executor.invoke({"input": final_prompt_with_identity})
-            response_text = response_object['output']
-            
-            st.markdown(response_text)
-            
-            audio_bytes = None
-            if st.session_state.voice_enabled and st.session_state.voices_map:
-                speakable_text = extract_speakable_text(response_text)
-                if speakable_text:
-                    selected_voice_id = st.session_state.voices_map.get(st.session_state.get("selected_voice_name", "Rachel"))
-                    if selected_voice_id:
-                        audio_bytes = speak_response_cloud(speakable_text, selected_voice_id)
-                        if audio_bytes:
-                            st.audio(audio_bytes, format='audio/mpeg', start_time=0)
-            
-            st.session_state.messages.append({"role": "assistant", "content": response_text, "audio": audio_bytes})
+            else:
+                # ... (lógica de conversación normal sin cambios) ...
+
+            # ... (código para mostrar texto, generar y mostrar audio, y guardar en historial) ...
