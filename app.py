@@ -93,7 +93,8 @@ with st.sidebar:
 
 # Muestra la bienvenida solo si el historial está vacío
 if not st.session_state.messages:
-    st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')).markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
+    with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
+        st.markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
 
 # Muestra todo el historial de chat existente
 for msg in st.session_state.messages:
@@ -109,38 +110,44 @@ if st.session_state.get('user_input'):
 
 # Si hay una nueva entrada, se inicia el ciclo de procesamiento
 if prompt:
-    # Añade el mensaje del usuario al historial
+    # Añade y muestra el mensaje del usuario inmediatamente
     st.session_state.messages.append({"role": "user", "content": prompt})
-
-    # Procesa la respuesta del asistente
-    with st.spinner("GhoStid AI está pensando..."):
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0, google_api_key=GOOGLE_API_KEY)
-        
-        if st.session_state.get("uploaded_file"):
-            uploaded_file = st.session_state.pop("uploaded_file")
-            file_extension = os.path.splitext(uploaded_file.name)[1]
-            if file_extension in [".png", ".jpg", ".jpeg"]:
-                image = Image.open(uploaded_file)
-                human_message = HumanMessage(content=[{"type": "text", "text": prompt}, {"type": "image_url", "image_url": image}])
-                response = llm.invoke([human_message]); response_text = response.content
+    with st.chat_message("user", avatar=st.session_state.get('user_avatar', '🧑‍💻')):
+        st.markdown(prompt)
+    
+    # Procesa y muestra la respuesta del asistente en su propia burbuja
+    with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
+        with st.spinner("GhoStid AI está pensando..."):
+            llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0, google_api_key=GOOGLE_API_KEY)
+            
+            if st.session_state.get("uploaded_file"):
+                uploaded_file = st.session_state.pop("uploaded_file")
+                file_extension = os.path.splitext(uploaded_file.name)[1]
+                if file_extension in [".png", ".jpg", ".jpeg"]:
+                    image = Image.open(uploaded_file)
+                    human_message = HumanMessage(content=[{"type": "text", "text": prompt}, {"type": "image_url", "image_url": image}])
+                    response = llm.invoke([human_message]); response_text = response.content
+                else:
+                    content = uploaded_file.getvalue().decode("utf-8")
+                    prompt_with_context = f"{prompt}\n\n**Contexto del archivo '{uploaded_file.name}':**\n```\n{content}\n```"
+                    tools = [PythonREPLTool(), TavilySearchResults(k=3)]; prompt_template = hub.pull("hwchase17/react"); agent = create_react_agent(llm, tools, prompt_template); agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
+                    response_object = agent_executor.invoke({"input": prompt_with_context}); response_text = response_object['output']
             else:
-                content = uploaded_file.getvalue().decode("utf-8")
-                prompt_with_context = f"{prompt}\n\n**Contexto del archivo '{uploaded_file.name}':**\n```\n{content}\n```"
                 tools = [PythonREPLTool(), TavilySearchResults(k=3)]; prompt_template = hub.pull("hwchase17/react"); agent = create_react_agent(llm, tools, prompt_template); agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
-                response_object = agent_executor.invoke({"input": prompt_with_context}); response_text = response_object['output']
-        else:
-            tools = [PythonREPLTool(), TavilySearchResults(k=3)]; prompt_template = hub.pull("hwchase17/react"); agent = create_react_agent(llm, tools, prompt_template); agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
-            response_object = agent_executor.invoke({"input": f"Responde en español a: {prompt}"}); response_text = response_object['output']
-        
-        audio_bytes = None
-        if st.session_state.voice_enabled and st.session_state.voices_map:
-            speakable_text = extract_speakable_text(response_text)
-            if speakable_text:
-                selected_voice_id = st.session_state.voices_map[st.session_state.selected_voice_name]
-                audio_bytes = speak_response_cloud(speakable_text, selected_voice_id)
-        
-        # Guarda el mensaje completo del asistente en el historial
-        st.session_state.messages.append({"role": "assistant", "content": response_text, "audio": audio_bytes})
-        
-        # Dispara la recarga final para mostrar la conversación actualizada
-        st.rerun()
+                response_object = agent_executor.invoke({"input": f"Responde en español a: {prompt}"}); response_text = response_object['output']
+            
+            # Muestra el texto de la respuesta
+            st.markdown(response_text)
+            
+            # Genera, MUESTRA y guarda el audio
+            audio_bytes = None
+            if st.session_state.voice_enabled and st.session_state.voices_map:
+                speakable_text = extract_speakable_text(response_text)
+                if speakable_text:
+                    selected_voice_id = st.session_state.voices_map[st.session_state.selected_voice_name]
+                    audio_bytes = speak_response_cloud(speakable_text, selected_voice_id)
+                    if audio_bytes:
+                        st.audio(audio_bytes, format='audio/mpeg', start_time=0)
+            
+            # Guarda el mensaje completo en el historial para la próxima vez
+            st.session_state.messages.append({"role": "assistant", "content": response_text, "audio": audio_bytes})
