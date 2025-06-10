@@ -1,6 +1,6 @@
 streamlit
 google-generativeai
-langchain
+langchain-core
 langchain-google-genai
 langchain-experimental
 python-dotenv
@@ -8,3 +8,4 @@ tavily-python
 SpeechRecognition
 requests
 Pillow
+langchain
