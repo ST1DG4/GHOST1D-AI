@@ -1,5 +1,6 @@
 streamlit
 google-generativeai
+langchain
 langchain-core
 langchain-google-genai
 langchain-experimental
@@ -8,5 +9,4 @@ tavily-python
 SpeechRecognition
 requests
 Pillow
-langchain
 PyAudio
