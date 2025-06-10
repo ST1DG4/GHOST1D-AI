@@ -7,14 +7,13 @@ import io
 import re
 
 # --- IMPORTACIONES ---
+# Hemos eliminado pydub y simpleaudio, ya no son necesarios para la reproducción
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_experimental.tools import PythonREPLTool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain import hub
 import speech_recognition as sr
-from pydub import AudioSegment
-import simpleaudio as sa
 
 # --- CONFIGURACIÓN INICIAL ---
 load_dotenv()
@@ -26,7 +25,7 @@ if not ELEVENLABS_API_KEY:
     st.error("Error crítico: La clave de API de ElevenLabs no se encontró.")
     st.stop()
 
-# --- FUNCIONES DE CARGA Y HABILIDADES (SIN CAMBIOS) ---
+# --- FUNCIONES DE CARGA Y HABILIDADES ---
 @st.cache_data
 def load_assets(asset_dir):
     if not os.path.exists(asset_dir): return []
@@ -49,17 +48,15 @@ def listen_to_user():
     with sr.Microphone() as source: st.info("Escuchando..."); r.adjust_for_ambient_noise(source); audio = r.listen(source)
     try: query = r.recognize_google(audio, language='es-ES'); st.success(f"Has dicho: {query}"); return query
     except Exception: st.error("No te he entendido."); return None
+
 def extract_speakable_text(text):
     text = re.sub(r'```.*?```', '', text, flags=re.DOTALL); text = text.replace('*', '').replace('`', ''); return ' '.join(text.split())
-def speak_response_controllable(text_to_speak, voice_id):
-    """
-    Genera audio y, en lugar de reproducirlo, lo muestra en un reproductor
-    de audio de Streamlit, que es compatible con la nube.
-    """
-    # Detenemos la reproducción anterior (aunque no es estrictamente necesario ahora, es buena práctica)
-    if 'play_obj' in st.session_state and st.session_state.play_obj:
-        st.session_state.play_obj.stop()
 
+# --- FUNCIÓN DE VOZ SIMPLIFICADA PARA LA NUBE ---
+def speak_response_cloud(text_to_speak, voice_id):
+    """
+    Genera audio y lo muestra en un reproductor de Streamlit.
+    """
     TTS_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
     headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
     data = {"text": text_to_speak, "model_id": "eleven_multilingual_v2"}
@@ -67,20 +64,14 @@ def speak_response_controllable(text_to_speak, voice_id):
     try:
         response = requests.post(TTS_URL, json=data, headers=headers)
         if response.status_code == 200:
-            # En lugar de usar pydub/simpleaudio para reproducir,
-            # usamos la función nativa de Streamlit.
-            st.audio(response.content, format='audio/mpeg')
+            # La función nativa de Streamlit para mostrar audio.
+            st.audio(response.content, format='audio/mpeg', start_time=0)
         else:
             st.error(f"Error de API de ElevenLabs: {response.text}")
     except Exception as e:
         st.error(f"Error al procesar el audio: {e}")
 
-# También debemos eliminar la función stop_speaking y la lógica del botón,
-# ya que st.audio() no es controlable de esa manera.
-# Por lo tanto, también eliminaremos la sección del botón de la barra lateral.
-def stop_speaking():
-    if 'play_obj' in st.session_state and st.session_state.play_obj and st.session_state.play_obj.is_playing():
-        st.session_state.play_obj.stop(); st.session_state.play_obj = None
+# --- ELIMINADO: La función stop_speaking() ya no es necesaria ---
 
 # --- INTERFAZ DE USUARIO (SIDEBAR) ---
 with st.sidebar:
@@ -107,46 +98,65 @@ with st.sidebar:
             st.session_state.user_gif = st.selectbox("Avatar Animado (Usuario):", options=[None] + st.session_state.animated_avatars, format_func=format_func)
         else: st.session_state.assistant_gif = None; st.session_state.user_gif = None
 
-    if 'play_obj' in st.session_state and st.session_state.play_obj and st.session_state.play_obj.is_playing():
-        if st.button("🛑 Detener Voz", use_container_width=True, type="primary"): stop_speaking(); st.rerun() 
+    # --- ELIMINADO: El botón "Detener Voz" ya no es necesario ---
     
     st.markdown("---")
-    # --- CORRECCIÓN DEL AVISO AMARILLO ---
-    # Cambiamos 'use_column_width' por 'use_container_width'
     st.image("GHOSTID_LOGO.png", use_container_width=True)
     st.markdown("<p style='text-align: center;'>STIDGAR</p>", unsafe_allow_html=True)
 
 # --- ÁREA PRINCIPAL Y LÓGICA DEL AGENTE ---
-# (Sin cambios aquí, la lógica es robusta)
-if 'play_obj' not in st.session_state: st.session_state.play_obj = None
 if st.session_state.get("mic_error"):
     st.error("❌ Error de Micrófono."); st.warning("Revisa la configuración de sonido y privacidad de Windows.");
     if st.button("🔄 Volver"): st.session_state.mic_error = False; st.rerun()
 else:
     if "messages" not in st.session_state: st.session_state.messages = [{"role": "assistant", "content": "¡Hola! Soy GhoStid AI. ¿En qué te ayudo?"}]
+    # --- Modificación: lógica de visualización de mensajes para el audio ---
     for message in st.session_state.messages:
         static_avatar = st.session_state.get('assistant_avatar', '🤖') if message["role"] == "assistant" else st.session_state.get('user_avatar', '🧑‍💻')
         with st.chat_message(message["role"], avatar=static_avatar):
             gif_to_show = st.session_state.get('assistant_gif') if message["role"] == "assistant" else st.session_state.get('user_gif')
             if gif_to_show: st.image(gif_to_show, width=120)
             st.markdown(message["content"])
+            # Si el mensaje tiene audio guardado, lo mostramos
+            if message.get("audio"):
+                st.audio(message["audio"], format='audio/mpeg', start_time=0)
+
     if prompt := st.chat_input("Escribe tu pregunta o pídemelo..."):
-        stop_speaking(); st.session_state.user_input_from_voice = None; st.session_state.user_input_from_text = prompt
+        st.session_state.user_input_from_voice = None; st.session_state.user_input_from_text = prompt
     user_input = st.session_state.get('user_input_from_text') or st.session_state.get('user_input_from_voice')
     if user_input:
-        stop_speaking(); st.session_state.user_input_from_text = None; st.session_state.user_input_from_voice = None; st.session_state.messages.append({"role": "user", "content": user_input})
+        st.session_state.user_input_from_text = None; st.session_state.user_input_from_voice = None; st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user", avatar=st.session_state.get('user_avatar', '🧑‍💻')):
             if st.session_state.get('user_gif'): st.image(st.session_state.get('user_gif'), width=120)
             st.markdown(user_input)
+        
         llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0); tools = [PythonREPLTool(), TavilySearchResults(k=3)]; prompt_template = hub.pull("hwchase17/react"); agent = create_react_agent(llm, tools, prompt_template); agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
+        
         with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
             with st.spinner("GhoStid AI está pensando..."):
                 response_object = agent_executor.invoke({"input": f"Responde en español a: {user_input}"}); response_text = response_object['output']
                 if st.session_state.get('assistant_gif'): st.image(st.session_state.get('assistant_gif'), width=120)
                 st.markdown(response_text)
+
+                assistant_message = {"role": "assistant", "content": response_text}
+                
                 if st.session_state.voice_enabled and st.session_state.voices_map:
                     speakable_text = extract_speakable_text(response_text)
                     if speakable_text:
-                        with st.spinner("Generando y reproduciendo voz..."):
-                            selected_voice_id = st.session_state.voices_map[st.session_state.selected_voice_name]; speak_response_controllable(speakable_text, selected_voice_id)
-                st.session_state.messages.append({"role": "assistant", "content": response_text}); st.rerun()
+                        with st.spinner("Generando voz para la nube..."):
+                            selected_voice_id = st.session_state.voices_map[st.session_state.selected_voice_name]
+                            
+                            # Generamos el audio directamente aquí para poder guardarlo y mostrarlo
+                            TTS_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{selected_voice_id}"
+                            headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
+                            data = {"text": speakable_text, "model_id": "eleven_multilingual_v2"}
+                            response = requests.post(TTS_URL, json=data, headers=headers)
+                            if response.status_code == 200:
+                                audio_bytes = response.content
+                                st.audio(audio_bytes, format='audio/mpeg', start_time=0)
+                                assistant_message["audio"] = audio_bytes
+                            else:
+                                st.error("Error al generar audio.")
+
+                st.session_state.messages.append(assistant_message)
+                st.rerun()
