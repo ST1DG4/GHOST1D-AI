@@ -8,11 +8,11 @@ import re
 
 # --- IMPORTACIONES ---
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_experimental.tools import PythonREPLTool
 from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain import hub # Es crucial para obtener el prompt correcto
 import speech_recognition as sr
 
 # --- CONFIGURACIÓN INICIAL ---
@@ -73,7 +73,6 @@ with st.sidebar:
         st.session_state.user_input = listen_to_user()
     uploaded_file = st.file_uploader("📄 Adjuntar Archivo", type=["png", "jpg", "jpeg", "txt", "py", "md", "csv"])
     if uploaded_file: st.session_state.uploaded_file = uploaded_file
-
     st.header("Configuración")
     st.session_state.voice_enabled = st.toggle("Activar voz", value=True)
     if st.session_state.voices_map:
@@ -93,7 +92,6 @@ with st.sidebar:
 if not st.session_state.messages:
     with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
         st.markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
-
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=st.session_state.get('assistant_avatar', '🤖') if msg["role"] == "assistant" else st.session_state.get('user_avatar', '🧑‍💻')):
         st.markdown(msg["content"])
@@ -114,30 +112,26 @@ if prompt:
             llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0, google_api_key=GOOGLE_API_KEY)
             
             # --- ¡¡LA ARQUITECTURA CORRECTA DEL CEREBRO!! ---
-            # 1. Definimos las herramientas que puede usar.
+            # 1. Usamos el prompt estándar y probado de LangChain.
+            agent_prompt = hub.pull("hwchase17/react")
+            
+            # 2. Definimos las herramientas que puede usar.
             tools = [PythonREPLTool(), TavilySearchResults(k=3)]
 
-            # 2. Creamos la plantilla del prompt de forma profesional.
-            system_instruction = """
-            Eres GhoStid AI, un tutor de programación experto y amigable. Tienes una voz y la usas.
-            Responde SIEMPRE en español. NUNCA digas que no tienes voz.
-            Si el usuario te saluda, devuelve el saludo. Si te hace una pregunta compleja, usa tus herramientas.
-            """
-            
-            prompt_template = ChatPromptTemplate.from_messages(
-                [
-                    ("system", system_instruction),
-                    ("user", "{input}"),
-                    ("placeholder", "{agent_scratchpad}"),
-                ]
-            )
-
             # 3. Creamos el agente con las piezas correctas.
-            agent = create_react_agent(llm, tools, prompt_template)
+            agent = create_react_agent(llm, tools, agent_prompt)
             agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
-            # 4. Invocamos al agente.
-            response_object = agent_executor.invoke({"input": prompt})
+            # 4. Creamos un prompt final con nuestras instrucciones de identidad.
+            final_prompt_with_identity = f"""
+            INSTRUCCIONES DE SISTEMA: Eres GhoStid AI, un tutor de programación experto y amigable.
+            Tienes una voz y la usas. NUNCA digas que no tienes voz. Responde siempre en español.
+            
+            TAREA DEL USUARIO: {prompt}
+            """
+            
+            # 5. Invocamos al agente con el prompt mejorado.
+            response_object = agent_executor.invoke({"input": final_prompt_with_identity})
             response_text = response_object['output']
             
             st.markdown(response_text)
