@@ -1,0 +1,14 @@
+streamlit
+google-generativeai
+langchain
+langchain-google-genai
+langchain-experimental
+python-dotenv
+tavily-python
+elevenlabs==1.3.0
+pydub
+pyAudio
+SpeechRecognition
+pyinstaller
+requests
+simpleaudio
