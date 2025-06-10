@@ -22,7 +22,6 @@ st.set_page_config(page_title="GhoStid AI", layout="wide", page_icon="🤖")
 # --- OBTENER CLAVE API ---
 ELEVENLABS_API_KEY = os.environ.get("ELEVEN_API_KEY")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-
 if not ELEVENLABS_API_KEY or not GOOGLE_API_KEY:
     st.error("Error crítico: Faltan claves de API. Revisa tus secretos en Streamlit Cloud.")
     st.stop()
@@ -53,7 +52,6 @@ def listen_to_user():
     except Exception: st.error("No te he entendido."); return None
 
 def extract_speakable_text(text):
-    # Esta función limpia el texto para que la IA no lea bloques de código.
     text_without_code = re.sub(r'```.*?```', '[CÓDIGO OMITIDO]', text, flags=re.DOTALL)
     return ' '.join(text_without_code.split())
 
@@ -63,8 +61,7 @@ def speak_response_cloud(text_to_speak, voice_id):
     data = {"text": text_to_speak, "model_id": "eleven_multilingual_v2"}
     try:
         response = requests.post(TTS_URL, json=data, headers=headers)
-        if response.status_code == 200:
-            return response.content
+        if response.status_code == 200: return response.content
         else: return None
     except Exception: return None
 
@@ -76,7 +73,6 @@ with st.sidebar:
         st.session_state.user_input = listen_to_user()
     uploaded_file = st.file_uploader("📄 Adjuntar Archivo", type=["png", "jpg", "jpeg", "txt", "py", "md", "csv"])
     if uploaded_file: st.session_state.uploaded_file = uploaded_file
-
     st.header("Configuración")
     st.session_state.voice_enabled = st.toggle("Activar voz", value=True)
     if st.session_state.voices_map:
@@ -93,32 +89,23 @@ with st.sidebar:
     st.markdown("---"); st.image("GHOSTID_LOGO.png", use_container_width=True); st.markdown("<p style='text-align: center;'>STIDGAR</p>", unsafe_allow_html=True)
 
 # --- ÁREA PRINCIPAL ---
-
-# Muestra la bienvenida solo si el historial está vacío
 if not st.session_state.messages:
-    with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
-        st.markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
-
-# Muestra todo el historial de chat existente
+    st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')).markdown("¡Hola! Soy GhoStid AI. Puedes hacerme una pregunta o adjuntar un archivo para analizarlo.")
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=st.session_state.get('assistant_avatar', '🤖') if msg["role"] == "assistant" else st.session_state.get('user_avatar', '🧑‍💻')):
         st.markdown(msg["content"])
         if msg.get("audio"):
             st.audio(msg["audio"], format='audio/mpeg', start_time=0)
 
-# Obtiene la nueva entrada del usuario
 prompt = st.chat_input("Escribe tu pregunta o pídemelo...")
 if st.session_state.get('user_input'):
     prompt = st.session_state.pop('user_input')
 
-# Si hay una nueva entrada, se inicia el ciclo de procesamiento
 if prompt:
-    # Añade y muestra el mensaje del usuario inmediatamente
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user", avatar=st.session_state.get('user_avatar', '🧑‍💻')):
         st.markdown(prompt)
     
-    # Procesa y muestra la respuesta del asistente en su propia burbuja
     with st.chat_message("assistant", avatar=st.session_state.get('assistant_avatar', '🤖')):
         with st.spinner("GhoStid AI está pensando..."):
             llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0, google_api_key=GOOGLE_API_KEY)
@@ -139,23 +126,15 @@ if prompt:
                 tools = [PythonREPLTool(), TavilySearchResults(k=3)]; agent_prompt = hub.pull("hwchase17/react"); agent = create_react_agent(llm, tools, agent_prompt); agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True, max_iterations=5)
                 response_object = agent_executor.invoke({"input": f"Responde en español a: {prompt}"}); response_text = response_object['output']
             
-            # Muestra el texto de la respuesta COMPLETA
             st.markdown(response_text)
             
-            # Genera, MUESTRA y guarda el audio
             audio_bytes = None
             if st.session_state.voice_enabled and st.session_state.voices_map:
-                # --- ¡¡LA CORRECCIÓN ESTÁ AQUÍ!! ---
-                # 1. Limpiamos el texto para quitarle el código antes de hablar
                 speakable_text = extract_speakable_text(response_text)
-                
-                # 2. Solo intentamos hablar si queda algo de texto después de limpiar
                 if speakable_text:
                     selected_voice_id = st.session_state.voices_map[st.session_state.selected_voice_name]
                     audio_bytes = speak_response_cloud(speakable_text, selected_voice_id)
                     if audio_bytes:
-                        # 3. Mostramos el reproductor INMEDIATAMENTE
                         st.audio(audio_bytes, format='audio/mpeg', start_time=0)
             
-            # Guarda el mensaje completo en el historial para la próxima vez
             st.session_state.messages.append({"role": "assistant", "content": response_text, "audio": audio_bytes})
