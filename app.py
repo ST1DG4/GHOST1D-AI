@@ -12,7 +12,7 @@ from langchain_core.messages import HumanMessage
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_experimental.tools import PythonREPLTool
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain import hub # Es crucial para obtener el prompt correcto
+from langchain import hub
 import speech_recognition as sr
 
 # --- CONFIGURACIÓN INICIAL ---
@@ -52,7 +52,7 @@ def listen_to_user():
     except Exception: st.error("No te he entendido."); return None
 
 def extract_speakable_text(text):
-    text_without_code = re.sub(r'```.*?```', '[CÓDIGO OMITIDO]', text, flags=re.DOTALL)
+    text_without_code = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
     return ' '.join(text_without_code.split())
 
 def speak_response_cloud(text_to_speak, voice_id):
@@ -61,9 +61,16 @@ def speak_response_cloud(text_to_speak, voice_id):
     data = {"text": text_to_speak, "model_id": "eleven_multilingual_v2"}
     try:
         response = requests.post(TTS_URL, json=data, headers=headers)
-        if response.status_code == 200: return response.content
-        else: return None
-    except Exception: return None
+        if response.status_code == 200:
+            return response.content
+        else:
+            # --- ¡¡LA LÍNEA DE DIAGNÓSTICO!! ---
+            # Si la API falla, mostramos el error en la pantalla.
+            st.error(f"Error de API de ElevenLabs: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        st.error(f"Error de conexión con ElevenLabs: {e}")
+        return None
 
 # --- INTERFAZ DE USUARIO (SIDEBAR) ---
 with st.sidebar:
@@ -111,33 +118,26 @@ if prompt:
         with st.spinner("GhoStid AI está pensando..."):
             llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest", temperature=0, google_api_key=GOOGLE_API_KEY)
             
-            # --- ¡¡LA ARQUITECTURA CORRECTA DEL CEREBRO!! ---
-            # 1. Usamos el prompt estándar y probado de LangChain.
-            agent_prompt = hub.pull("hwchase17/react")
-            
-            # 2. Definimos las herramientas que puede usar.
+            # --- Lógica del agente ---
             tools = [PythonREPLTool(), TavilySearchResults(k=3)]
-
-            # 3. Creamos el agente con las piezas correctas.
+            agent_prompt = hub.pull("hwchase17/react")
             agent = create_react_agent(llm, tools, agent_prompt)
             agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
-
-            # 4. Creamos un prompt final con nuestras instrucciones de identidad.
+            
+            # --- Envolvemos la pregunta con las instrucciones de identidad ---
             final_prompt_with_identity = f"""
             INSTRUCCIONES DE SISTEMA: Eres GhoStid AI, un tutor de programación experto y amigable.
             Tienes una voz y la usas. NUNCA digas que no tienes voz. Responde siempre en español.
-            
             TAREA DEL USUARIO: {prompt}
             """
             
-            # 5. Invocamos al agente con el prompt mejorado.
             response_object = agent_executor.invoke({"input": final_prompt_with_identity})
             response_text = response_object['output']
             
             st.markdown(response_text)
             
             audio_bytes = None
-            if st.session_state.voice_enabled:
+            if st.session_state.voice_enabled and st.session_state.voices_map:
                 speakable_text = extract_speakable_text(response_text)
                 if speakable_text:
                     selected_voice_id = st.session_state.voices_map.get(st.session_state.get("selected_voice_name", "Rachel"))
