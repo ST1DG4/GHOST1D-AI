@@ -51,14 +51,33 @@ def listen_to_user():
     except Exception: st.error("No te he entendido."); return None
 def extract_speakable_text(text):
     text = re.sub(r'```.*?```', '', text, flags=re.DOTALL); text = text.replace('*', '').replace('`', ''); return ' '.join(text.split())
-def speak_response_controllable(text, voice_id):
-    if 'play_obj' in st.session_state and st.session_state.play_obj: st.session_state.play_obj.stop()
-    TTS_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"; headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}; data = {"text": text, "model_id": "eleven_multilingual_v2"}
+def speak_response_controllable(text_to_speak, voice_id):
+    """
+    Genera audio y, en lugar de reproducirlo, lo muestra en un reproductor
+    de audio de Streamlit, que es compatible con la nube.
+    """
+    # Detenemos la reproducción anterior (aunque no es estrictamente necesario ahora, es buena práctica)
+    if 'play_obj' in st.session_state and st.session_state.play_obj:
+        st.session_state.play_obj.stop()
+
+    TTS_URL = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    headers = {"Accept": "audio/mpeg", "Content-Type": "application/json", "xi-api-key": ELEVENLABS_API_KEY}
+    data = {"text": text_to_speak, "model_id": "eleven_multilingual_v2"}
+
     try:
         response = requests.post(TTS_URL, json=data, headers=headers)
         if response.status_code == 200:
-            mp3_audio = AudioSegment.from_file(io.BytesIO(response.content), format="mp3"); wav_io = io.BytesIO(); mp3_audio.export(wav_io, format="wav"); wav_io.seek(0); wave_obj = sa.WaveObject.from_wave_file(wav_io); st.session_state.play_obj = wave_obj.play()
-    except Exception as e: st.error(f"Error en la reproducción de audio: {e}")
+            # En lugar de usar pydub/simpleaudio para reproducir,
+            # usamos la función nativa de Streamlit.
+            st.audio(response.content, format='audio/mpeg')
+        else:
+            st.error(f"Error de API de ElevenLabs: {response.text}")
+    except Exception as e:
+        st.error(f"Error al procesar el audio: {e}")
+
+# También debemos eliminar la función stop_speaking y la lógica del botón,
+# ya que st.audio() no es controlable de esa manera.
+# Por lo tanto, también eliminaremos la sección del botón de la barra lateral.
 def stop_speaking():
     if 'play_obj' in st.session_state and st.session_state.play_obj and st.session_state.play_obj.is_playing():
         st.session_state.play_obj.stop(); st.session_state.play_obj = None
